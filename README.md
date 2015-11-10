@@ -1,5 +1,5 @@
 ======================
-bitfinex-python-client
+python-bitfinex-client
 ======================
 
 Python package to communicate with the bitfinex.com API.
