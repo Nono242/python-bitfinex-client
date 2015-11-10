@@ -269,21 +269,34 @@ class Trading(Public):
 
     def account_info(self):
         """
-        Returns dictionary
-        pairs	[string]	The currency included in the pairs with this fee schedule
-        maker_fees	[decimal]	Your current fees for maker orders (limit orders not marketable, in percent)
-        taker_fees	[decimal]	Your current fees for taker orders (marketable order, in percent)
+        Return information about your account (trading fees).
+        Input:
+            NONE
+
+        Output: List of dictionaries
+            pairs	[string]	The currency included in the pairs with this fee schedule
+            maker_fees	[decimal]	Your current fees for maker orders (limit orders not marketable, in percent)
+            taker_fees	[decimal]	Your current fees for taker orders (marketable order, in percent)
         """
         return self._post("account_infos", return_json=True)
 
-    def historical_data(self, currency, since = None, until = None, limit = None, wallet = None):
+    def historical_balance(self, currency, since = None, until = None, limit = None, wallet = None):
         """
         Returns all of your balance ledger entries.
-        currency	[string]	Currency
-        amount	[decimal]	Positive (credit) or negative (debit)
-        balance	[decimal]	Wallet balance after the current entry
-        description	[string]	Description of the entry. Includes the wallet in which the operation took place
-        timestamp	[time]	Timestamp of the entry
+
+        Input:
+            currency	[string]	The currency to look for.
+            since	[time]	Optional. Return only the history after this timestamp.
+            until	[time]	Optional. Return only the history before this timestamp.
+            limit	[int]	Optional. Limit the number of entries to return. Default is 500.
+            wallet	[string]	Optional. Return only entries that took place in this wallet. Accepted inputs are: trading, exchange, deposit.
+
+        Output: List of dictionaries
+            currency	[string]	Currency
+            amount	[decimal]	Positive (credit) or negative (debit)
+            balance	[decimal]	Wallet balance after the current entry
+            description	[string]	Description of the entry. Includes the wallet in which the operation took place
+            timestamp	[time]	Timestamp of the entry
         """
         data = {'currency': currency}
         if since is not None:
@@ -296,3 +309,35 @@ class Trading(Public):
             data.update({'wallet': wallet})
 
         return self._post("history", data=data, return_json=True)
+
+    def historical_movements(self, currency, method = None, since = None, until = None, limit = None):
+        """
+        Returns all of  your past deposits/withdrawals.
+
+        Input:
+            currency	[string]	The currency to look for.
+            method	[string]	Optional. The method of the deposit/withdrawal (can be bitcoin, litecoin, darkcoin, wire).
+            since	[time]	Optional. Return only the history after this timestamp.
+            until	[time]	Optional. Return only the history before this timestamp.
+            limit	[int]	Optional. Limit the number of entries to return. Default is 500.
+
+        Output: List of dictionaries
+            currency	[string]	
+            method	[string]	
+            type	[string]	
+            amount	[decimal]	Absolute value of the movement
+            description	[string]	Description of the movement (txid, destination address,,,,)
+            status	[string]	Status of the movement
+            timestamp	[time]	Timestamp of the movement
+        """
+        data = {'currency': currency}
+        if method is not None:
+            data.update({'method': method})
+        if since is not None:
+            data.update({'since': since})
+        if until is not None:
+            data.update({'until': until})
+        if limit is not None:
+            data.update({'limit': limit})
+
+        return self._post("history/movements", data=data, return_json=True)
