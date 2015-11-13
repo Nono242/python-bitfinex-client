@@ -7,6 +7,7 @@ import time
 import warnings
 import json
 import base64
+import collections
 
 import requests
 
@@ -30,6 +31,7 @@ class BaseClient(object):
     api_url = 'https://api.bitfinex.com/v1/'
     exception_on_error = True
     symbols = []
+    authenticated = False
 
     def __init__(self, proxydict=None, *args, **kwargs):
         self.proxydict = proxydict
@@ -58,6 +60,7 @@ class BaseClient(object):
         Make a POST request.
         """
         data = {}
+        #if not self.authenticated:
         data['X-BFX-APIKEY'] = self.key
 
         msg={ 'request' : '/v1/' + args[0]}
@@ -70,7 +73,6 @@ class BaseClient(object):
             self.secret.encode('utf-8'), msg=data['X-BFX-PAYLOAD'].encode('utf-8'),
             digestmod=hashlib.sha384).hexdigest()
         data['X-BFX-SIGNATURE'] = signature
-
         kwargs['headers'] = data
         return self._request(requests.post, *args, **kwargs)
 
@@ -95,6 +97,17 @@ class BaseClient(object):
         if 'proxies' not in kwargs:
             kwargs['proxies'] = self.proxydict
 
+
+        if response.status_code == 400:
+            try:
+                json_response = response.json()
+            except ValueError:
+                json_response = None
+            if isinstance(json_response, dict):
+                error = json_response.get('message')
+                if error:
+                    raise BitfinexError(error)
+
         # Check for error, raising an exception if appropriate.
         response.raise_for_status()
 
@@ -103,7 +116,7 @@ class BaseClient(object):
         except ValueError:
             json_response = None
         if isinstance(json_response, dict):
-            error = json_response.get('error')
+            error = json_response.get('message')
             if error:
                 raise BitfinexError(error)
 
@@ -221,16 +234,19 @@ class Public(BaseClient):
 
 class Trading(Public):
 
-    def __init__(self, username, key, secret, *args, **kwargs):
+    def __init__(self, key, secret, *args, **kwargs):
         """
         Stores the username, key, and secret which is used when making POST
         requests to Bitfinex.
         """
         super(Trading, self).__init__(
-            username=username, key=key, secret=secret, *args, **kwargs)
-        self.username = username
+            key=key, secret=secret, *args, **kwargs)
         self.key = key
         self.secret = secret
+        self.account_infos()
+        self.authenticated = True
+
+        
 
     def get_nonce(self):
         """
@@ -267,7 +283,9 @@ class Trading(Public):
             #return True
         #raise BitfinexError("Unexpected response")
 
-    def account_info(self):
+##################### ACCOUNT INFO #####################
+
+    def account_infos(self):
         """
         Return information about your account (trading fees).
         Input:
@@ -280,6 +298,8 @@ class Trading(Public):
         """
         return self._post("account_infos", return_json=True)
 
+##################### HISTORICAL DATA #####################
+    
     def historical_balance(self, currency, since = None, until = None, limit = None, wallet = None):
         """
         Returns all of your balance ledger entries.
@@ -341,3 +361,180 @@ class Trading(Public):
             data.update({'limit': limit})
 
         return self._post("history/movements", data=data, return_json=True)
+
+    def past_trades(self, symbol, timestamp, until = None, limit_trades = None, reverse = None):
+        """
+        Returns your past trades.
+
+        Input:
+            symbol	[string]	The pair traded (BTCUSD, LTCUSD, LTCBTC).
+            timestamp	[time]	Trades made before this timestamp wont be returned.
+            until	[time]	Optional. Trades made after this timestamp wont be returned.
+            limit_trades	[int]	Optional. Limit the number of trades returned. Default is 50.
+            reverse	[int]	Optional. Return trades in reverse order (the oldest comes first). Default is returning newest trades first.            currency	[string]	The currency to look for.
+
+        Output: List of dictionaries
+            price	[price]	
+            amount	[decimal]	
+            timestamp	[time]	return only trades after or at the time specified here
+            exchange	[string]	
+            type	[string]	Sell or Buy
+            fee_currency	[string]	Currency you paid this trades fee in
+            fee_amount	[decimal]	Amount of fees you paid for this trade
+            tid	[integer]	unique identification number of the trade
+            order_id	[integer]	unique identification number of the parent order of the trade
+        """
+        if self._check_symbol (symbol):
+            data = {'symbol': symbol, 'timestamp': timestamp}
+            if until is not None:
+                data.update({'until': until})
+            if limit_trades is not None:
+                data.update({'limit_trades': limit_trades})
+            if reverse is not None:
+                data.update({'reverse': reverse})
+
+        return self._post("mytrades", data=data, return_json=True)
+
+##################### MARGIN FUNDING #####################
+    
+    def offer_new(self, currency, amount, rate, period, direction):
+        """
+        Submit a new offer. Returns the status of an offer. Is it active? Was it cancelled? To what extent has it been executed? etc.
+
+        Input:
+            currency	[string]	The name of the currency.
+            amount	[decimal]	Offer size: how much to lend or borrow.
+            rate	[decimal]	Rate to lend or borrow at. In percentage per 365 days.
+            period	[integer]	Number of days of the funding contract (in days)
+            direction	[string]	Either lend or loan.
+
+        Output: A dictionary
+            id	[int]	A randomly generated ID for the offer.
+            currency	[string]	The currency name of the offer.
+            rate	[decimal]	The rate the offer was issued at (in % per 365 days).
+            period	[integer]	The number of days of the offer.
+            direction	[string]	Either lend or loan.
+            timestamp	[time]	The timestamp the offer was submitted.
+            is_live	[bool]	Could the offer still be filled?
+            is_cancelled	[bool]	Has the offer been cancelled?
+            original_amount	[decimal]	How much is the original offer.
+            remaining_amount	[decimal]	How much of the offer has not yet been executed so far in its history?
+            executed_amount	[decimal]	How much of the offer has been executed so far in its history?
+            offer_id	[int]	A randomly generated ID for the offer. (Same as id)
+        """
+        data = {'currency': currency, 'amount': str(amount), 'rate': str(rate), 'period': period, 'direction': direction}
+        return self._post("offer/new", data=data, return_json=True)
+
+    def offer_cancel(self, offer_id):
+        """
+        Returns the status of an offer. Is it active? Was it cancelled? To what extent has it been executed? etc.
+
+        Input:
+            offer_id	[int]	The offer ID given by `/offer/new`
+
+        Output: A dictionary
+            id	[int]	A randomly generated ID for the offer.
+            currency	[string]	The currency name of the offer.
+            rate	[decimal]	The rate the offer was issued at (in % per 365 days).
+            period	[integer]	The number of days of the offer.
+            direction	[string]	Either lend or loan.
+            timestamp	[time]	The timestamp the offer was submitted.
+            is_live	[bool]	Could the offer still be filled?
+            is_cancelled	[bool]	Has the offer been cancelled?
+            original_amount	[decimal]	How much is the original offer.
+            remaining_amount	[decimal]	How much of the offer has not yet been executed so far in its history?
+            executed_amount	[decimal]	How much of the offer has been executed so far in its history?
+        """
+        data = {'offer_id': offer_id}
+        return self._post("offer/cancel", data=data, return_json=True)
+
+    def offer_status(self, offer_id):
+        """
+        Returns the status of an offer. Is it active? Was it cancelled? To what extent has it been executed? etc.
+
+        Input:
+            offer_id	[int]	The offer ID given by `/offer/new`
+
+        Output: A dictionary
+            id	[int]	A randomly generated ID for the offer.
+            currency	[string]	The currency name of the offer.
+            rate	[decimal]	The rate the offer was issued at (in % per 365 days).
+            period	[integer]	The number of days of the offer.
+            direction	[string]	Either lend or loan.
+            timestamp	[time]	The timestamp the offer was submitted.
+            is_live	[bool]	Could the offer still be filled?
+            is_cancelled	[bool]	Has the offer been cancelled?
+            original_amount	[decimal]	How much is the original offer.
+            remaining_amount	[decimal]	How much of the offer has not yet been executed so far in its history?
+            executed_amount	[decimal]	How much of the offer has been executed so far in its history?
+        """
+        data = {'offer_id': offer_id}
+        return self._post("offer/status", data=data, return_json=True)
+
+    def credits(self):
+        """
+        Return information about your active credits
+        Input:
+            NONE
+        
+        Output: List of dictionaries
+            status	[string]	Shall be 'ACTIVE'.
+            timestamp   [time]	The timestamp (the offer was submitted => To be checked).
+            amount       [decimal] How much is the active credit
+            period	[integer]	The number of days of the offer.
+            currency	[string]	The currency name of the offer.
+            rate	[decimal]	The rate the offer was issued at (in % per 365 days).
+            id                  [int] Id of the credits
+        """
+        return self._post("credits", return_json=True)
+
+    def offers(self):
+        """
+        Return information about your active offers
+        Input:
+            NONE
+        Output: List of dictionaries
+            id	[int]	A randomly generated ID for the offer.
+            currency	[string]	The currency name of the offer.
+            rate	[decimal]	The rate the offer was issued at (in % per 365 days).
+            period	[integer]	The number of days of the offer.
+            direction	[string]	Either lend or loan.
+            timestamp	[time]	The timestamp the offer was submitted.
+            is_live	[bool]	Could the offer still be filled?
+            is_cancelled	[bool]	Has the offer been cancelled?
+            original_amount	[decimal]	How much is the original offer.
+            remaining_amount	[decimal]	How much of the offer has not yet been executed so far in its history?
+            executed_amount	[decimal]	How much of the offer has been executed so far in its history?
+        """
+        return self._post("offers", return_json=True)
+
+    def taken_funds(self):
+        """
+        Return information about your funding currently borrowed and used in a margin position.
+        Input:
+            NONE
+        """
+        #Output: List of dictionaries
+            #type	[string]	trading, deposit or exchange.
+            #currency	[string]	Currency
+            #amount	[decimal]	How much balance of this currency in this wallet
+            #available	[decimal]	How much X there is in this wallet that is available to trade
+        
+        return self._post("taken_funds", return_json=True)
+
+##################### WALLET BALANCES #####################
+
+    def balances(self):
+        """
+        Return information about your balances
+        Input:
+            NONE
+
+        Output: List of dictionaries
+            type	[string]	trading, deposit or exchange.
+            currency	[string]	Currency
+            amount	[decimal]	How much balance of this currency in this wallet
+            available	[decimal]	How much X there is in this wallet that is available to trade
+        """
+        return self._post("balances", return_json=True)
+
