@@ -31,7 +31,7 @@ class BaseClient(object):
     api_url = 'https://api.bitfinex.com/v1/'
     exception_on_error = True
     symbols = []
-    authenticated = False
+    #authenticated = False
 
     def __init__(self, proxydict=None, *args, **kwargs):
         self.proxydict = proxydict
@@ -67,10 +67,10 @@ class BaseClient(object):
         msg.update(self._default_data(*args, **kwargs))
         if 'data' in kwargs:
             msg.update(kwargs.pop('data'))
-        data['X-BFX-PAYLOAD'] = base64.standard_b64encode(json.dumps(msg))
+        data['X-BFX-PAYLOAD'] = base64.standard_b64encode(json.dumps(msg).encode('utf-8'))
 
         signature = hmac.new(
-            self.secret.encode('utf-8'), msg=data['X-BFX-PAYLOAD'].encode('utf-8'),
+            self.secret.encode('utf-8'), msg=data['X-BFX-PAYLOAD'],
             digestmod=hashlib.sha384).hexdigest()
         data['X-BFX-SIGNATURE'] = signature
         kwargs['headers'] = data
@@ -92,11 +92,23 @@ class BaseClient(object):
         return_json = kwargs.pop('return_json', False)
         url = self.api_url + url
         
-        response = func(url, *args, **kwargs)
-
+        try :
+            response = func(url, *args, **kwargs)
+        except (requests.exceptions.ConnectionError, #requests.exceptions.ConnectTimeout,
+                requests.exceptions.Timeout) as error:
+            json_response = None
+            raise BitfinexError('Connection to Bitfinex failed: %s'%error)
+        
         if 'proxies' not in kwargs:
             kwargs['proxies'] = self.proxydict
 
+        # Check for error, raising an exception if appropriate.
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            error = e.status_code
+            print (e)
+            raise BitfinexError("Error %s: "%(error,e))
 
         if response.status_code == 400:
             try:
@@ -107,9 +119,6 @@ class BaseClient(object):
                 error = json_response.get('message')
                 if error:
                     raise BitfinexError(error)
-
-        # Check for error, raising an exception if appropriate.
-        response.raise_for_status()
 
         try:
             json_response = response.json()
