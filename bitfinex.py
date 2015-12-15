@@ -107,7 +107,7 @@ class BaseClient(object):
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
             print (e)
-            raise BitfinexError("Error %s: "%(e.code,e.read()))
+            raise BitfinexError("HTTP Error %s"%e.response.status_code)
 
         if response.status_code == 400:
             try:
